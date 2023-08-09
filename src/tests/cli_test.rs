@@ -3,8 +3,8 @@ use std::process::Command;
 
 use anyhow::Result;
 use assert_cmd::prelude::*;
-use predicates::prelude::*;
 use predicates::ord::eq;
+use predicates::prelude::*;
 
 use crate::store::KVStore;
 
@@ -48,7 +48,6 @@ fn cli_get_exist_value() {
     kv_store.set("k2", "v2").unwrap();
     kv_store.set("k3", "v3").unwrap();
 
-    
     drop(kv_store);
 
     Command::cargo_bin("kvs")

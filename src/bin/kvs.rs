@@ -25,7 +25,7 @@ enum Commands {
 
 fn main() -> Result<()> {
     let mut server: KVStore = KVStore::new(&current_dir().map_err(|e| anyhow!(e))?)?;
- 
+
     let cli = Cli::parse();
 
     let res = match cli.command {
