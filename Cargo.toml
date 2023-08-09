@@ -5,11 +5,9 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.72"
-bendy = { version = "0.3.3", features = ["std","serde"] }
 bson = {version = "2.6.1", features = ["serde_with"]}
 clap = { version = "4.3.19", features = ["derive"] }
 serde = { version = "1.0.183", features = ["derive"] }
-tempfile = "3.7.1"
 
 [dev-dependencies]
 assert_cmd = "2.0.12"
