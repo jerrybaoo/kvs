@@ -18,7 +18,7 @@ pub struct KVStore {
     index: HashMap<String, TransactionPosition>,
 }
 
-const LOG_MAX_SIZE: u32 = 1000u32;
+const LOG_MAX_SIZE: u32 = 90u32;
 
 impl KVStore {
     pub fn new(root_path: &PathBuf) -> Result<Self> {
@@ -100,7 +100,6 @@ impl KVStore {
                     bson::from_reader::<_, Transaction>(&mut reader.inner)
                 {
                     let pos_after = reader.inner.stream_position()? as u32;
-
                     let t_pos = TransactionPosition {
                         log_reader_id: i,
                         offset: pos_before,
@@ -121,10 +120,10 @@ impl KVStore {
     }
 
     pub fn set(&mut self, key: &str, value: &str) -> Result<()> {
-        self.max_reader_id += 1;
         if self.writer.pos > LOG_MAX_SIZE {
-            let last_reader = new_log_reader(self.max_reader_id, &self.path)?;
+            self.max_reader_id += 1;
             let last_writer = new_log_writer(self.max_reader_id, &self.path)?;
+            let last_reader: BufferReader<File> = new_log_reader(self.max_reader_id, &self.path)?;
 
             self.readers.insert(self.max_reader_id, last_reader);
             self.writer = last_writer;
@@ -133,14 +132,14 @@ impl KVStore {
         let transaction: Transaction = Transaction::Set(key.to_string(), value.to_string());
         let bytes = transaction.to_bytes()?;
 
-        let size: u32 = self.writer.write(&bytes)?;
         let pos = TransactionPosition {
             log_reader_id: self.max_reader_id,
             offset: self.writer.pos,
-            len: size,
+            len: bytes.len() as u32,
         };
 
         self.index.insert(key.to_string(), pos);
+        self.writer.write(&bytes)?;
 
         Ok(())
     }
@@ -199,7 +198,6 @@ impl KVStore {
             let len = io::copy(&mut buf.as_slice(), &mut compress_log_writer.writer)?;
             pos.log_reader_id = compress_log_id;
             pos.offset = new_offset;
-
             new_offset = new_offset + len as u32;
         }
 
@@ -235,6 +233,7 @@ impl KVStore {
 
 fn new_log_writer(log_id: u32, path_buf: &PathBuf) -> Result<BufferWriter<File>> {
     File::options()
+        .create(true)
         .read(true)
         .append(true)
         .open(log_path(log_id, path_buf))
