@@ -18,7 +18,7 @@ pub struct KVStore {
     index: HashMap<String, TransactionPosition>,
 }
 
-const LOG_MAX_SIZE: u32 = 90u32;
+const LOG_MAX_SIZE: u32 = 1024 * 1024;
 
 impl KVStore {
     pub fn new(root_path: &PathBuf) -> Result<Self> {
@@ -140,6 +140,7 @@ impl KVStore {
 
         self.index.insert(key.to_string(), pos);
         self.writer.write(&bytes)?;
+        self.writer.writer.flush()?;
 
         Ok(())
     }
