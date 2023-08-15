@@ -7,6 +7,7 @@ edition = "2021"
 anyhow = "1.0.72"
 bson = {version = "2.6.1", features = ["serde_with"]}
 clap = { version = "4.3.19", features = ["derive"] }
+log = "0.4.20"
 serde = { version = "1.0.183", features = ["derive"] }
 tempfile = "3.7.1"
 

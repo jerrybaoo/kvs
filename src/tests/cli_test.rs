@@ -7,7 +7,7 @@ use predicates::ord::eq;
 use predicates::prelude::*;
 use tempfile::TempDir;
 
-use crate::store::KVStore;
+use crate::store::{KVStore, KvsEngine};
 
 #[test]
 fn cli_get() -> Result<()> {
@@ -57,9 +57,9 @@ fn cli_remove() -> Result<()> {
 fn cli_get_exist_value() {
     let tmp_dir = TempDir::new().unwrap();
     let mut kv_store = KVStore::new(&tmp_dir.path().to_path_buf()).unwrap();
-    kv_store.set("k1", "v1").unwrap();
-    kv_store.set("k2", "v2").unwrap();
-    kv_store.set("k3", "v3").unwrap();
+    kv_store.set("k1".to_string(), "v1".to_string()).unwrap();
+    kv_store.set("k2".to_string(), "v2".to_string()).unwrap();
+    kv_store.set("k3".to_string(), "v3".to_string()).unwrap();
 
     drop(kv_store);
 
@@ -83,7 +83,7 @@ fn kvs_new_write_log() {
     loop {
         key_id += 1;
         kv_store
-            .set(&key_id.to_string(), &(key_id * 20).to_string())
+            .set(key_id.to_string(), (key_id * 20).to_string())
             .unwrap();
 
         let mut files = fs::read_dir(&path.join("db"))
@@ -99,7 +99,7 @@ fn kvs_new_write_log() {
         }
     }
     assert!(kv_store
-        .get(&key_id.to_string())
+        .get(key_id.to_string())
         .unwrap()
         .eq(&(key_id * 20).to_string()));
 }
@@ -113,7 +113,7 @@ fn kvs_compress() {
     loop {
         key_id += 1;
         kv_store
-            .set(&key_id.to_string(), &(key_id * 20).to_string())
+            .set(key_id.to_string(), (key_id * 20).to_string())
             .unwrap();
 
         let mut files = fs::read_dir(&path.join("db"))
@@ -140,7 +140,7 @@ fn kvs_compress() {
     assert_eq!(files.len(), 2);
     assert!(files.last().unwrap().ends_with("3.log"));
     assert!(kv_store
-        .get(&key_id.to_string())
+        .get(key_id.to_string())
         .unwrap()
         .eq(&(key_id * 20).to_string()));
 }

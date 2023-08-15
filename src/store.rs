@@ -1,12 +1,22 @@
 // kv store
-use std::collections::HashMap;
-use std::fs::{self, File};
-use std::io::{self, BufReader, BufWriter, Read, Seek, SeekFrom::Start, Write};
-use std::path::PathBuf;
-use std::vec;
+use std::{
+    collections::HashMap,
+    fs::{self, File},
+    io::{self, BufReader, BufWriter, Read, Seek, SeekFrom::Start, Write},
+    path::PathBuf,
+    vec,
+};
 
 use anyhow::{anyhow, Ok, Result};
 use serde::{Deserialize, Serialize};
+
+pub trait KvsEngine {
+    fn get(&mut self, key: String) -> Result<String>;
+
+    fn set(&mut self, key: String, value: String) -> Result<Option<String>>;
+
+    fn remove(&mut self, key: String) -> Result<()>;
+}
 
 pub struct KVStore {
     path: PathBuf,
@@ -119,48 +129,6 @@ impl KVStore {
         Ok(())
     }
 
-    pub fn set(&mut self, key: &str, value: &str) -> Result<()> {
-        if self.writer.pos > LOG_MAX_SIZE {
-            self.max_reader_id += 1;
-            let last_writer = new_log_writer(self.max_reader_id, &self.path)?;
-            let last_reader: BufferReader<File> = new_log_reader(self.max_reader_id, &self.path)?;
-
-            self.readers.insert(self.max_reader_id, last_reader);
-            self.writer = last_writer;
-        }
-
-        let transaction: Transaction = Transaction::Set(key.to_string(), value.to_string());
-        let bytes = transaction.to_bytes()?;
-
-        let pos = TransactionPosition {
-            log_reader_id: self.max_reader_id,
-            offset: self.writer.pos,
-            len: bytes.len() as u32,
-        };
-
-        self.index.insert(key.to_string(), pos);
-        self.writer.write(&bytes)?;
-        self.writer.writer.flush()?;
-
-        Ok(())
-    }
-
-    pub fn get(&mut self, key: &str) -> Result<String> {
-        let pos = self.index.get(key).ok_or(anyhow!("key not found"))?;
-        let reader = self
-            .readers
-            .get_mut(&pos.log_reader_id)
-            .ok_or(anyhow!("db maybe breaded"))?;
-
-        let mut data = vec![0; pos.len as usize];
-        reader.read_exact(pos.offset, &mut data)?;
-
-        match Transaction::from_bytes(&data)? {
-            Transaction::Set(_, value) => Ok(value),
-            Transaction::Remove(_) => Err(anyhow!("key not found")),
-        }
-    }
-
     pub fn remove(&mut self, key: &str) -> Result<()> {
         self.index.remove(key).ok_or(anyhow!("key not found"))?;
 
@@ -232,6 +200,63 @@ impl KVStore {
     pub fn parallel_compress() {}
 }
 
+impl KvsEngine for KVStore {
+    fn get(&mut self, key: String) -> Result<String> {
+        let pos = self.index.get(&key).ok_or(anyhow!("key not found"))?;
+        let reader = self
+            .readers
+            .get_mut(&pos.log_reader_id)
+            .ok_or(anyhow!("db maybe breaded"))?;
+
+        let mut data = vec![0; pos.len as usize];
+        reader.read_exact(pos.offset, &mut data)?;
+
+        match Transaction::from_bytes(&data)? {
+            Transaction::Set(_, value) => Ok(value),
+            Transaction::Remove(_) => Err(anyhow!("key not found")),
+        }
+    }
+
+    fn set(&mut self, key: String, value: String) -> Result<Option<String>> {
+        if self.writer.pos > LOG_MAX_SIZE {
+            self.max_reader_id += 1;
+            let last_writer = new_log_writer(self.max_reader_id, &self.path)?;
+            let last_reader: BufferReader<File> = new_log_reader(self.max_reader_id, &self.path)?;
+
+            self.readers.insert(self.max_reader_id, last_reader);
+            self.writer = last_writer;
+        }
+
+        let old_value = self.get(key.clone()).ok();
+
+        let transaction: Transaction = Transaction::Set(key.to_string(), value.to_string());
+        let bytes = transaction.to_bytes()?;
+
+        let pos = TransactionPosition {
+            log_reader_id: self.max_reader_id,
+            offset: self.writer.pos,
+            len: bytes.len() as u32,
+        };
+
+        self.index.insert(key.to_string(), pos);
+        self.writer.write(&bytes)?;
+        self.writer.writer.flush()?;
+
+        Ok(old_value)
+    }
+
+    fn remove(&mut self, key: String) -> Result<()> {
+        self.index.remove(&key).ok_or(anyhow!("key not found"))?;
+
+        let transaction: Transaction = Transaction::Remove(key);
+        let bytes = transaction.to_bytes()?;
+
+        self.writer.write(&bytes)?;
+
+        Ok(())
+    }
+}
+
 fn new_log_writer(log_id: u32, path_buf: &PathBuf) -> Result<BufferWriter<File>> {
     File::options()
         .create(true)
@@ -258,7 +283,7 @@ fn log_path(log_id: u32, path_buf: &PathBuf) -> PathBuf {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-enum Transaction {
+pub enum Transaction {
     Set(String, String),
     Remove(String),
 }
