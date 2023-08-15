@@ -10,20 +10,19 @@ use kvs::server::{Request, Response};
 struct Cli {
     #[command(subcommand)]
     command: Commands,
+
+    #[clap(long)]
+    addr: String,
 }
 
 #[derive(Subcommand, Debug)]
 enum Commands {
     #[command(about = "get value from store by key")]
-    Get { key: String, server_addr: String },
+    Get { key: String },
     #[command(about = "set value from store by key")]
-    Set {
-        key: String,
-        value: String,
-        server_addr: String,
-    },
+    Set { key: String, value: String },
     #[command(name = "rm", about = "remove key from kv store")]
-    Remove { key: String, server_addr: String },
+    Remove { key: String },
     #[command(name = "V", about = "print the version")]
     Version {},
 }
@@ -32,21 +31,17 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     let request = match cli.command {
-        Commands::Get { key, server_addr } => {
+        Commands::Get { key } => {
             let req = bson::to_vec(&Request::Get(key))?;
-            Some((req, server_addr))
+            Some((req, cli.addr))
         }
-        Commands::Set {
-            key,
-            value,
-            server_addr,
-        } => {
+        Commands::Set { key, value } => {
             let req = bson::to_vec(&Request::Set(key, value))?;
-            Some((req, server_addr))
+            Some((req, cli.addr))
         }
-        Commands::Remove { key, server_addr } => {
+        Commands::Remove { key } => {
             let req: Vec<u8> = bson::to_vec(&Request::Remove(key))?;
-            Some((req, server_addr))
+            Some((req, cli.addr))
         }
         Commands::Version {} => {
             let version = env!("CARGO_PKG_VERSION");

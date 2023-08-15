@@ -2,8 +2,8 @@ use std::env::current_dir;
 
 use anyhow::{anyhow, Result};
 use clap::Parser;
-use kvs::{kvs::KVStore, server::Server};
 use kvs::sled::Sled;
+use kvs::{kvs::KVStore, server::Server};
 
 #[derive(Parser, Debug)]
 struct ServerCommand {
