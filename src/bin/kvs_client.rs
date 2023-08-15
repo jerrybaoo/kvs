@@ -10,39 +10,43 @@ use kvs::server::{Request, Response};
 struct Cli {
     #[command(subcommand)]
     command: Commands,
-
-    #[arg(short, long)]
-    server_addr: String,
 }
 
 #[derive(Subcommand, Debug)]
 enum Commands {
     #[command(about = "get value from store by key")]
-    Get { key: String },
+    Get { key: String, server_addr: String },
     #[command(about = "set value from store by key")]
-    Set { key: String, value: String },
+    Set {
+        key: String,
+        value: String,
+        server_addr: String,
+    },
     #[command(name = "rm", about = "remove key from kv store")]
-    Remove { key: String },
+    Remove { key: String, server_addr: String },
     #[command(name = "V", about = "print the version")]
     Version {},
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    let mut stream = TcpStream::connect(cli.server_addr)?;
 
     let request = match cli.command {
-        Commands::Get { key } => {
+        Commands::Get { key, server_addr } => {
             let req = bson::to_vec(&Request::Get(key))?;
-            Some(req)
+            Some((req, server_addr))
         }
-        Commands::Set { key, value } => {
+        Commands::Set {
+            key,
+            value,
+            server_addr,
+        } => {
             let req = bson::to_vec(&Request::Set(key, value))?;
-            Some(req)
+            Some((req, server_addr))
         }
-        Commands::Remove { key } => {
-            let req = bson::to_vec(&Request::Remove(key))?;
-            Some(req)
+        Commands::Remove { key, server_addr } => {
+            let req: Vec<u8> = bson::to_vec(&Request::Remove(key))?;
+            Some((req, server_addr))
         }
         Commands::Version {} => {
             let version = env!("CARGO_PKG_VERSION");
@@ -51,11 +55,16 @@ fn main() -> Result<()> {
         }
     };
 
-    if let Some(bz) = request {
+    if let Some((bz, server_addr)) = request {
+        let mut stream = TcpStream::connect(&server_addr)?;
         stream.write(&bz)?;
         bson::from_reader::<_, Response>(stream).map_or_else(
             |e| println!("read response from stream failed, reason:{:}", e),
-            |r| println!("response: {:}", r.response),
+            |r| {
+                if !r.response.is_empty() {
+                    println!("{}", r.response)
+                }
+            },
         )
     }
 

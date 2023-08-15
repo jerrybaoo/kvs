@@ -2,7 +2,8 @@ use std::env::current_dir;
 
 use anyhow::{anyhow, Result};
 use clap::Parser;
-use kvs::{server::Server, store::KVStore};
+use kvs::{kvs::KVStore, server::Server};
+use kvs::sled::Sled;
 
 #[derive(Parser, Debug)]
 struct ServerCommand {
@@ -16,15 +17,11 @@ struct ServerCommand {
 fn main() -> Result<()> {
     let cli = ServerCommand::parse();
 
-    let mut server = if cli.engine.eq("kvs") {
+    if cli.engine.eq("kvs") {
         let engine = KVStore::new(&current_dir().map_err(|e| anyhow!(e))?)?;
-        Server::<KVStore>::new(engine)
+        Server::<KVStore>::new(engine)?.serve(cli.listen_addr)
     } else {
-        let engine = KVStore::new(&current_dir().map_err(|e| anyhow!(e))?)?;
-        Server::<KVStore>::new(engine)
-    }?;
-
-    server.serve(cli.listen_addr)?;
-
-    Ok(())
+        let engine = Sled::new(&current_dir().map_err(|e| anyhow!(e))?)?;
+        Server::<Sled>::new(engine)?.serve(cli.listen_addr)
+    }
 }

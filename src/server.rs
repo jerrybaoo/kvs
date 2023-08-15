@@ -4,7 +4,7 @@ use std::net::{TcpListener, TcpStream};
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::store::KvsEngine;
+use crate::kvs::KvsEngine;
 
 pub struct Server<E: KvsEngine> {
     engine: E,
@@ -47,31 +47,36 @@ impl<E: KvsEngine> Server<E> {
     }
 
     fn get_from_engine(&mut self, key: &String) -> Response {
-        let result = self.engine.get(key.to_owned()).map_or_else(
-            |e| format!("get key:{} failed,reason: {}", key, e),
-            |value| format!("get {}:{} success", key, value),
-        );
-
-        Response { response: result }
+        self.engine.get(key.to_owned()).map_or_else(
+            |_| Response {
+                response: "Key not found".to_string(),
+            },
+            |value| Response { response: value },
+        )
     }
 
     fn set_to_engine(&mut self, key: &String, value: &String) -> Response {
-        let result = self
-            .engine
+        self.engine
             .set(key.to_owned(), value.to_owned())
             .map_or_else(
-                |e| format!("set {}:{} failed,err:{}", key, value, e),
-                |_| format!("set {}:{} success,", key, value),
-            );
-        Response { response: result }
+                |e| Response {
+                    response: e.to_string(),
+                },
+                |_| Response {
+                    response: "".to_string(),
+                },
+            )
     }
 
     fn remove_from_engine(&mut self, key: &String) -> Response {
-        let result = self.engine.remove(key.to_owned()).map_or_else(
-            |e| format!("set {} failed,err:{}", key, e),
-            |_| format!("remove {} success", key),
-        );
-        Response { response: result }
+        self.engine.remove(key.to_owned()).map_or_else(
+            |e| Response {
+                response: e.to_string(),
+            },
+            |_| Response {
+                response: "".to_string(),
+            },
+        )
     }
 }
 

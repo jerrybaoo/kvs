@@ -129,17 +129,6 @@ impl KVStore {
         Ok(())
     }
 
-    pub fn remove(&mut self, key: &str) -> Result<()> {
-        self.index.remove(key).ok_or(anyhow!("key not found"))?;
-
-        let transaction: Transaction = Transaction::Remove(key.to_string());
-        let bytes = transaction.to_bytes()?;
-
-        self.writer.write(&bytes)?;
-
-        Ok(())
-    }
-
     // The main purpose of compression is to remove content that is not pointed to by the index.
     // The simplest approach is to iterate through the entire index, copy the indexed content
     // to a newly created compressed file,and update the index to point to the new locations.
@@ -213,7 +202,7 @@ impl KvsEngine for KVStore {
 
         match Transaction::from_bytes(&data)? {
             Transaction::Set(_, value) => Ok(value),
-            Transaction::Remove(_) => Err(anyhow!("key not found")),
+            Transaction::Remove(_) => Err(anyhow!("Key not found")),
         }
     }
 
@@ -246,13 +235,13 @@ impl KvsEngine for KVStore {
     }
 
     fn remove(&mut self, key: String) -> Result<()> {
-        self.index.remove(&key).ok_or(anyhow!("key not found"))?;
+        self.index.remove(&key).ok_or(anyhow!("Key not found"))?;
 
         let transaction: Transaction = Transaction::Remove(key);
         let bytes = transaction.to_bytes()?;
 
         self.writer.write(&bytes)?;
-
+        self.writer.writer.flush()?;
         Ok(())
     }
 }

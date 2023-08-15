@@ -1,161 +1,131 @@
-use std::fs::{self};
-use std::process::Command;
-
-use anyhow::Result;
 use assert_cmd::prelude::*;
-use predicates::ord::eq;
-use predicates::prelude::*;
+use predicates::str::{contains, is_empty};
+use std::process::Command;
+use std::sync::mpsc;
+use std::thread;
+use std::time::Duration;
 use tempfile::TempDir;
 
-use crate::store::{KVStore, KvsEngine};
-
-#[test]
-fn cli_get() -> Result<()> {
-    let tmp_dir = TempDir::new().unwrap();
-    Command::cargo_bin("kvs")
-        .unwrap()
-        .current_dir(&tmp_dir)
-        .arg("get")
-        .arg("k1-not-exits")
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("key not found"));
-
-    Ok(())
-}
-
-#[test]
-fn cli_set() -> Result<()> {
-    let tmp_dir = TempDir::new().unwrap();
-    Command::cargo_bin("kvs")
-        .unwrap()
-        .current_dir(&tmp_dir)
-        .arg("set")
-        .arg("k1")
-        .arg("v1")
-        .assert()
-        .success();
-
-    Ok(())
-}
-
-#[test]
-fn cli_remove() -> Result<()> {
-    let tmp_dir = TempDir::new().unwrap();
-    Command::cargo_bin("kvs")
-        .unwrap()
-        .current_dir(&tmp_dir)
-        .arg("rm")
-        .arg("k1")
-        .assert()
-        .success();
-
-    Ok(())
-}
-
-#[test]
-fn cli_get_exist_value() {
-    let tmp_dir = TempDir::new().unwrap();
-    let mut kv_store = KVStore::new(&tmp_dir.path().to_path_buf()).unwrap();
-    kv_store.set("k1".to_string(), "v1".to_string()).unwrap();
-    kv_store.set("k2".to_string(), "v2".to_string()).unwrap();
-    kv_store.set("k3".to_string(), "v3".to_string()).unwrap();
-
-    drop(kv_store);
-
-    Command::cargo_bin("kvs")
-        .unwrap()
-        .arg("get")
-        .arg("k1")
-        .current_dir(&tmp_dir)
-        .assert()
-        .success()
-        .stdout(eq("key:k1, value:v1").trim());
-}
-
-#[test]
-fn kvs_new_write_log() {
-    let tmp_dir = TempDir::new().unwrap();
-    let path = tmp_dir.path();
-    let mut kv_store = KVStore::new(&path.to_path_buf()).unwrap();
-    let mut key_id = 1;
-
-    loop {
-        key_id += 1;
-        kv_store
-            .set(key_id.to_string(), (key_id * 20).to_string())
-            .unwrap();
-
-        let mut files = fs::read_dir(&path.join("db"))
-            .unwrap()
-            .map(|e| e.map(|e| e.path()))
-            .collect::<Result<Vec<_>, std::io::Error>>()
-            .unwrap();
-
-        if files.len() >= 2 {
-            files.sort();
-            assert!(files.last().unwrap().ends_with("1.log"));
-            break;
-        }
-    }
-    assert!(kv_store
-        .get(key_id.to_string())
-        .unwrap()
-        .eq(&(key_id * 20).to_string()));
-}
-
-#[test]
-fn kvs_compress() {
-    let tmp_dir = TempDir::new().unwrap();
-    let path = tmp_dir.path();
-    let mut kv_store = KVStore::new(&path.to_path_buf()).unwrap();
-    let mut key_id = 1;
-    loop {
-        key_id += 1;
-        kv_store
-            .set(key_id.to_string(), (key_id * 20).to_string())
-            .unwrap();
-
-        let mut files = fs::read_dir(&path.join("db"))
-            .unwrap()
-            .map(|e| e.map(|e| e.path()))
-            .collect::<Result<Vec<_>, std::io::Error>>()
-            .unwrap();
-
-        if files.len() >= 3 {
-            files.sort();
-            assert!(files.last().unwrap().ends_with("2.log"));
-            break;
-        }
-    }
-
-    kv_store.compress_by_index().unwrap();
-    let mut files = fs::read_dir(&path.join("db"))
-        .unwrap()
-        .map(|e| e.map(|e| e.path()))
-        .collect::<Result<Vec<_>, std::io::Error>>()
+fn cli_access_server(engine: &str, addr: &str) {
+    let (sender, receiver) = mpsc::sync_channel(0);
+    let temp_dir = TempDir::new().unwrap();
+    let mut server = Command::cargo_bin("kvs_server").unwrap();
+    let mut child = server
+        .args(&["--engine", engine, "--listen-addr", addr])
+        .current_dir(&temp_dir)
+        .spawn()
         .unwrap();
+    let handle = thread::spawn(move || {
+        let _ = receiver.recv(); // wait for main thread to finish
+        child.kill().expect("server exited before killed");
+    });
+    thread::sleep(Duration::from_secs(1));
 
-    files.sort();
-    assert_eq!(files.len(), 2);
-    assert!(files.last().unwrap().ends_with("3.log"));
-    assert!(kv_store
-        .get(key_id.to_string())
+    Command::cargo_bin("kvs_client")
         .unwrap()
-        .eq(&(key_id * 20).to_string()));
+        .args(&["set", "key1", "value1", addr])
+        .current_dir(&temp_dir)
+        .assert()
+        .success()
+        .stdout(is_empty());
+
+    Command::cargo_bin("kvs_client")
+        .unwrap()
+        .args(&["get", "key1", addr])
+        .current_dir(&temp_dir)
+        .assert()
+        .success()
+        .stdout("value1\n");
+
+    Command::cargo_bin("kvs_client")
+        .unwrap()
+        .args(&["set", "key1", "value2", addr])
+        .current_dir(&temp_dir)
+        .assert()
+        .success()
+        .stdout(is_empty());
+
+    Command::cargo_bin("kvs_client")
+        .unwrap()
+        .args(&["get", "key1", addr])
+        .current_dir(&temp_dir)
+        .assert()
+        .success()
+        .stdout("value2\n");
+
+    Command::cargo_bin("kvs_client")
+        .unwrap()
+        .args(&["get", "key2", addr])
+        .current_dir(&temp_dir)
+        .assert()
+        .success()
+        .stdout(contains("Key not found"));
+
+    Command::cargo_bin("kvs_client")
+        .unwrap()
+        .args(&["rm", "key2", addr])
+        .current_dir(&temp_dir)
+        .assert()
+        .success()
+        .stdout(contains("Key not found"));
+
+    Command::cargo_bin("kvs_client")
+        .unwrap()
+        .args(&["set", "key2", "value3", addr])
+        .current_dir(&temp_dir)
+        .assert()
+        .success()
+        .stdout(is_empty());
+
+    Command::cargo_bin("kvs_client")
+        .unwrap()
+        .args(&["rm", "key1", addr])
+        .current_dir(&temp_dir)
+        .assert()
+        .success()
+        .stdout(is_empty());
+
+    sender.send(()).unwrap();
+    handle.join().unwrap();
+
+    // Reopen and check value
+    let (sender, receiver) = mpsc::sync_channel(0);
+    let mut server = Command::cargo_bin("kvs_server").unwrap();
+    let mut child = server
+        .args(&["--engine", engine, "--listen-addr", addr])
+        .current_dir(&temp_dir)
+        .spawn()
+        .unwrap();
+    let handle = thread::spawn(move || {
+        let _ = receiver.recv(); // wait for main thread to finish
+        child.kill().expect("server exited before killed");
+    });
+    thread::sleep(Duration::from_secs(1));
+
+    Command::cargo_bin("kvs_client")
+        .unwrap()
+        .args(&["get", "key2", addr])
+        .current_dir(&temp_dir)
+        .assert()
+        .success()
+        .stdout(contains("value3"));
+    Command::cargo_bin("kvs_client")
+        .unwrap()
+        .args(&["get", "key1", addr])
+        .current_dir(&temp_dir)
+        .assert()
+        .success()
+        .stdout(contains("Key not found"));
+    sender.send(()).unwrap();
+    handle.join().unwrap();
 }
 
 #[test]
-fn cli_version() -> Result<()> {
-    let tmp_dir = TempDir::new().unwrap();
+fn cli_access_server_kvs_engine() {
+    cli_access_server("kvs", "127.0.0.1:11221");
+}
 
-    Command::cargo_bin("kvs")
-        .unwrap()
-        .arg("V")
-        .current_dir(&tmp_dir)
-        .assert()
-        .success()
-        .stdout(predicates::str::contains(env!("CARGO_PKG_VERSION")));
-
-    Ok(())
+#[test]
+fn cli_access_server_sled_engine() {
+    cli_access_server("sled", "127.0.0.1:10001");
 }
