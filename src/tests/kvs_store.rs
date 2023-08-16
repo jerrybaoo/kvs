@@ -3,7 +3,7 @@ use std::fs::{self};
 use anyhow::Result;
 use tempfile::TempDir;
 
-use crate::kvs::{KVStore, KvsEngine};
+use crate::{engine::KvsEngine, kvs::KVStore};
 
 #[test]
 fn kvs_engine_new_write_log() {

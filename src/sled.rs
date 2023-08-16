@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use anyhow::{anyhow, Ok, Result};
 use sled::Db;
 
-use crate::kvs::KvsEngine;
+use crate::engine::KvsEngine;
 
 pub struct Sled {
     pub db: Db,

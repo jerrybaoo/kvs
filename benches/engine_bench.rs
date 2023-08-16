@@ -1,9 +1,8 @@
-use criterion::{black_box, criterion_group, criterion_main, BatchSize::*, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion};
 use rand::{distributions::Alphanumeric, Rng};
-use tempfile::{Builder, TempDir};
+use tempfile::TempDir;
 
-use kvs::kvs::{KVStore, KvsEngine};
-use kvs::sled::Sled;
+use kvs::{engine::KvsEngine, kvs::KVStore, sled::Sled};
 
 fn generate_random_string(length: usize) -> String {
     let mut rng = rand::thread_rng();
@@ -43,8 +42,7 @@ pub fn bench_write(c: &mut Criterion) {
     group.bench_function("kvs_write", |b| {
         b.iter(|| {
             keys.iter().enumerate().for_each(|(index, elem)| {
-                let _ = kvs_store
-                    .set(elem.to_owned(), values[index].to_owned());
+                let _ = kvs_store.set(elem.to_owned(), values[index].to_owned());
             })
         })
     });

@@ -4,7 +4,7 @@ use std::net::{TcpListener, TcpStream};
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::kvs::KvsEngine;
+use crate::engine::KvsEngine;
 
 pub struct Server<E: KvsEngine> {
     engine: E,

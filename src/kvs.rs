@@ -10,13 +10,7 @@ use std::{
 use anyhow::{anyhow, Ok, Result};
 use serde::{Deserialize, Serialize};
 
-pub trait KvsEngine {
-    fn get(&mut self, key: String) -> Result<String>;
-
-    fn set(&mut self, key: String, value: String) -> Result<Option<String>>;
-
-    fn remove(&mut self, key: String) -> Result<()>;
-}
+use crate::engine::KvsEngine;
 
 pub struct KVStore {
     path: PathBuf,
