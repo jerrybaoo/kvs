@@ -28,7 +28,7 @@ pub struct KVStore {
     index: HashMap<String, TransactionPosition>,
 }
 
-const LOG_MAX_SIZE: u32 = 1024 * 1024;
+const LOG_MAX_SIZE: u32 = 1024 * 1024 * 24;
 
 impl KVStore {
     pub fn new(root_path: &PathBuf) -> Result<Self> {

@@ -8,10 +8,16 @@ anyhow = "1.0.72"
 bson = {version = "2.6.1", features = ["serde_with"]}
 clap = { version = "4.3.19", features = ["derive"] }
 log = "0.4.20"
+rand = "0.8.5"
 serde = { version = "1.0.183", features = ["derive"] }
 sled = "0.34.7"
 tempfile = "3.7.1"
 
 [dev-dependencies]
 assert_cmd = "2.0.12"
+criterion = "0.5.1"
 predicates = "3.0.3"
+
+[[bench]]
+name="engine_bench"
+harness=false
