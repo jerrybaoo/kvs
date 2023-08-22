@@ -5,6 +5,7 @@ use sled::Db;
 
 use crate::engine::KvsEngine;
 
+#[derive(Clone)]
 pub struct Sled {
     pub db: Db,
 }
@@ -18,7 +19,7 @@ impl Sled {
 }
 
 impl KvsEngine for Sled {
-    fn get(&mut self, key: String) -> Result<String> {
+    fn get(&self, key: String) -> Result<String> {
         self.db
             .get(key)?
             .map(|v| v.to_vec())
@@ -27,7 +28,7 @@ impl KvsEngine for Sled {
             .ok_or(anyhow!("Key not found"))
     }
 
-    fn set(&mut self, key: String, value: String) -> Result<Option<String>> {
+    fn set(&self, key: String, value: String) -> Result<Option<String>> {
         self.db
             .insert(key, value.as_bytes())?
             .map(|v| v.to_vec())
@@ -36,7 +37,7 @@ impl KvsEngine for Sled {
             .map_err(|e| anyhow!(e))
     }
 
-    fn remove(&mut self, key: String) -> Result<()> {
+    fn remove(&self, key: String) -> Result<()> {
         self.db
             .remove(key)?
             .ok_or_else(|| anyhow!("Key not found"))

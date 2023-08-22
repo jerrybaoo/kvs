@@ -1,53 +1,57 @@
 use std::io::Write;
-use std::net::{TcpListener, TcpStream};
+use std::net::TcpListener;
 
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::engine::KvsEngine;
+use crate::thread_pool::NativeThreadPool;
 
 pub struct Server<E: KvsEngine> {
     engine: E,
+    thread_pool: NativeThreadPool,
 }
 
 impl<E: KvsEngine> Server<E> {
     pub fn new(engine: E) -> Result<Self> {
-        Ok(Self { engine })
+        Ok(Self {
+            engine,
+            thread_pool: NativeThreadPool::new(12),
+        })
     }
 
     pub fn serve(&mut self, addr: String) -> Result<()> {
         let listener = TcpListener::bind(addr)?;
-        for mut in_coming in listener.incoming() {
-            match in_coming.as_mut() {
-                Ok(stream) => {
-                    let vec = self.process_stream(stream)?;
-                    if let Err(e) = stream.write_all(&vec) {
-                        log::error!("write response failed, reason: {}", e);
+        
+        for in_coming in listener.incoming() {
+            let mut engine = self.engine.clone();
+            self.thread_pool.spawn(move || -> Result<()> {
+                match in_coming {
+                    Ok(mut stream) => {
+                        let request = bson::from_reader::<_, Request>(&stream)?;
+                        let response = Self::process_transaction(&mut engine, &request);
+                        let resp_bz = bson::ser::to_vec(&response).map_err(|e| anyhow!(e))?;
+                        stream.write_all(&resp_bz).map_err(|e| anyhow!(e))?;
                     }
+                    Err(e) => log::error!("connection error: {}", e),
                 }
-                Err(e) => log::error!("connection error: {}", e),
-            };
+                Ok(())
+            })
         }
 
         Ok(())
     }
 
-    fn process_stream(&mut self, stream: &mut TcpStream) -> Result<Vec<u8>> {
-        let request = bson::from_reader::<_, Request>(stream)?;
-        let response = self.process_transaction(&request);
-        bson::ser::to_vec(&response).map_err(|e| anyhow!(e))
-    }
-
-    fn process_transaction(&mut self, request: &Request) -> Response {
+    fn process_transaction(engine: &mut E, request: &Request) -> Response {
         match request {
-            Request::Get(key) => self.get_from_engine(key),
-            Request::Set(key, value) => self.set_to_engine(key, value),
-            Request::Remove(key) => self.remove_from_engine(key),
+            Request::Get(key) => Self::get_from_engine(engine, key),
+            Request::Set(key, value) => Self::set_to_engine(engine, key, value),
+            Request::Remove(key) => Self::remove_from_engine(engine, key),
         }
     }
 
-    fn get_from_engine(&mut self, key: &String) -> Response {
-        self.engine.get(key.to_owned()).map_or_else(
+    fn get_from_engine(engine: &mut E, key: &String) -> Response {
+        engine.get(key.to_owned()).map_or_else(
             |_| Response {
                 response: "Key not found".to_string(),
             },
@@ -55,21 +59,19 @@ impl<E: KvsEngine> Server<E> {
         )
     }
 
-    fn set_to_engine(&mut self, key: &String, value: &String) -> Response {
-        self.engine
-            .set(key.to_owned(), value.to_owned())
-            .map_or_else(
-                |e| Response {
-                    response: e.to_string(),
-                },
-                |_| Response {
-                    response: "".to_string(),
-                },
-            )
+    fn set_to_engine(engine: &mut E, key: &String, value: &String) -> Response {
+        engine.set(key.to_owned(), value.to_owned()).map_or_else(
+            |e| Response {
+                response: e.to_string(),
+            },
+            |_| Response {
+                response: "".to_string(),
+            },
+        )
     }
 
-    fn remove_from_engine(&mut self, key: &String) -> Response {
-        self.engine.remove(key.to_owned()).map_or_else(
+    fn remove_from_engine(engine: &mut E, key: &String) -> Response {
+        engine.remove(key.to_owned()).map_or_else(
             |e| Response {
                 response: e.to_string(),
             },

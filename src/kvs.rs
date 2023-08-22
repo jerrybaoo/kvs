@@ -4,6 +4,10 @@ use std::{
     fs::{self, File},
     io::{self, BufReader, BufWriter, Read, Seek, SeekFrom::Start, Write},
     path::PathBuf,
+    sync::{
+        atomic::{AtomicU32, Ordering},
+        Arc, Mutex, RwLock,
+    },
     vec,
 };
 
@@ -12,14 +16,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::engine::KvsEngine;
 
+#[derive(Clone)]
 pub struct KVStore {
     path: PathBuf,
 
-    readers: HashMap<u32, BufferReader<File>>,
-    writer: BufferWriter<File>,
-    max_reader_id: u32,
+    max_reader_id: Arc<AtomicU32>,
+    readers: Arc<RwLock<HashMap<u32, BufferReader<File>>>>,
 
-    index: HashMap<String, TransactionPosition>,
+    writer: Arc<Mutex<BufferWriter<File>>>,
+    index: Arc<RwLock<HashMap<String, TransactionPosition>>>,
 }
 
 const LOG_MAX_SIZE: u32 = 1024 * 1024 * 24;
@@ -63,19 +68,17 @@ impl KVStore {
 
         let mut kv_store: KVStore = KVStore {
             path: path.clone(),
-            readers,
-            writer,
-            index: HashMap::new(),
-            max_reader_id: (files.len() - 1) as u32,
+            max_reader_id: Arc::new(AtomicU32::new((files.len() - 1) as u32)),
+            readers: Arc::new(RwLock::new(readers)),
+            writer: Arc::new(Mutex::new(writer)),
+            index: Arc::new(RwLock::new(HashMap::new())),
         };
 
         kv_store.load_index()?;
 
         return Ok(kv_store);
     }
-}
 
-impl KVStore {
     fn load_index(&mut self) -> Result<()> {
         let f = File::options()
             .read(true)
@@ -95,8 +98,11 @@ impl KVStore {
 
     // type(1bit)| timestamp(32bit) | ksz(32bit) | vsz(32bite)| key| value
     fn load_index_from_readers(&mut self) -> Result<()> {
-        for i in 0..=self.max_reader_id {
-            let reader = self.readers.get_mut(&i).ok_or(anyhow!("index error"))?;
+        let mut readers = self.readers.write().map_err(|e| anyhow!(e.to_string()))?;
+        let mut index = self.index.write().map_err(|e| anyhow!(e.to_string()))?;
+
+        for i in 0..=self.max_reader_id.load(Ordering::Relaxed) {
+            let reader = readers.get_mut(&i).ok_or(anyhow!("index error"))?;
             loop {
                 let pos_before = reader.inner.stream_position()? as u32;
 
@@ -111,8 +117,8 @@ impl KVStore {
                     };
 
                     match t {
-                        Transaction::Set(k, _) => self.index.insert(k, t_pos),
-                        Transaction::Remove(k) => self.index.remove(&k),
+                        Transaction::Set(k, _) => index.insert(k, t_pos),
+                        Transaction::Remove(k) => index.remove(&k),
                     };
                 } else {
                     break;
@@ -129,17 +135,21 @@ impl KVStore {
     // Finally, all previous files can be deleted.
     // If the index is very large, then this will lock the db for a long time.
     pub fn compress_by_index(&mut self) -> Result<()> {
-        let compress_log_id = self.max_reader_id + 1;
-        let mut compress_log_writer = new_log_writer(compress_log_id, &self.path)?;
+        let mut readers = self.readers.write().map_err(|e| anyhow!(e.to_string()))?;
+        let mut index = self.index.write().map_err(|e| anyhow!(e.to_string()))?;
+
+        let max_reader_id = self.max_reader_id.load(Ordering::Relaxed);
+        let compress_log_id = max_reader_id + 1;
         let mut new_offset = 0;
 
-        for (_, pos) in &mut self.index {
-            if pos.log_reader_id == self.max_reader_id {
+        let mut compress_log_writer = new_log_writer(compress_log_id, &self.path)?;
+
+        for (_, pos) in index.iter_mut() {
+            if pos.log_reader_id == max_reader_id {
                 continue;
             }
 
-            let reader = self
-                .readers
+            let reader = readers
                 .get_mut(&pos.log_reader_id)
                 .ok_or(anyhow!("index has err"))?;
             reader.inner.seek(Start(pos.offset as u64))?;
@@ -155,20 +165,19 @@ impl KVStore {
 
         compress_log_writer.writer.flush()?;
 
-        let compressed_log_ids: Vec<_> = self
-            .readers
+        let compressed_log_ids: Vec<_> = readers
             .keys()
-            .filter(|&&id| id < self.max_reader_id)
+            .filter(|&&id| id < max_reader_id)
             .cloned()
             .collect();
 
         for id in compressed_log_ids {
-            self.readers.remove(&id);
+            readers.remove(&id);
             let _ = fs::remove_file(log_path(id, &self.path));
         }
 
-        self.max_reader_id = compress_log_id;
-        self.readers.insert(
+        self.max_reader_id.store(compress_log_id, Ordering::Relaxed);
+        readers.insert(
             compress_log_id,
             new_log_reader(compress_log_id, &self.path)?,
         );
@@ -184,10 +193,18 @@ impl KVStore {
 }
 
 impl KvsEngine for KVStore {
-    fn get(&mut self, key: String) -> Result<String> {
-        let pos = self.index.get(&key).ok_or(anyhow!("key not found"))?;
-        let reader = self
+    fn get(&self, key: String) -> Result<String> {
+        let index = self
+            .index
+            .read()
+            .map_err(|_| anyhow!("acquire index read lock failed"))?;
+        let mut readers = self
             .readers
+            .write()
+            .map_err(|_| anyhow!("acquire reader read lock failed"))?;
+
+        let pos = index.get(&key).ok_or(anyhow!("key not found"))?;
+        let reader = readers
             .get_mut(&pos.log_reader_id)
             .ok_or(anyhow!("db maybe breaded"))?;
 
@@ -200,42 +217,57 @@ impl KvsEngine for KVStore {
         }
     }
 
-    fn set(&mut self, key: String, value: String) -> Result<Option<String>> {
-        if self.writer.pos > LOG_MAX_SIZE {
-            self.max_reader_id += 1;
-            let last_writer = new_log_writer(self.max_reader_id, &self.path)?;
-            let last_reader: BufferReader<File> = new_log_reader(self.max_reader_id, &self.path)?;
+    fn set(&self, key: String, value: String) -> Result<Option<String>> {
+        let mut writer = self.writer.lock().map_err(|e| anyhow!(e.to_string()))?;
+        let mut max_reader_id = self.max_reader_id.load(Ordering::Relaxed);
 
-            self.readers.insert(self.max_reader_id, last_reader);
-            self.writer = last_writer;
+        if writer.pos > LOG_MAX_SIZE {
+            let mut readers = self.readers.write().map_err(|e| anyhow!(e.to_string()))?;
+            max_reader_id += 1;
+            let last_writer = new_log_writer(max_reader_id, &self.path)?;
+            let last_reader: BufferReader<File> = new_log_reader(max_reader_id, &self.path)?;
+
+            readers.insert(max_reader_id, last_reader);
+            self.max_reader_id.store(max_reader_id, Ordering::Relaxed);
+
+            writer.writer = last_writer.writer;
+            writer.pos = 0;
         }
 
         let old_value = self.get(key.clone()).ok();
+        let mut index = self.index.write().map_err(|e| anyhow!(e.to_string()))?;
 
         let transaction: Transaction = Transaction::Set(key.to_string(), value.to_string());
         let bytes = transaction.to_bytes()?;
 
-        let pos = TransactionPosition {
-            log_reader_id: self.max_reader_id,
-            offset: self.writer.pos,
-            len: bytes.len() as u32,
-        };
-
-        self.index.insert(key.to_string(), pos);
-        self.writer.write(&bytes)?;
-        self.writer.writer.flush()?;
+        index.insert(
+            key.to_string(),
+            TransactionPosition {
+                log_reader_id: max_reader_id,
+                offset: writer.pos,
+                len: bytes.len() as u32,
+            },
+        );
+        writer.write(&bytes)?;
+        writer.flush()?;
 
         Ok(old_value)
     }
 
-    fn remove(&mut self, key: String) -> Result<()> {
-        self.index.remove(&key).ok_or(anyhow!("Key not found"))?;
+    fn remove(&self, key: String) -> Result<()> {
+        let mut index = self
+            .index
+            .write()
+            .map_err(|_| anyhow!("acquire index read lock failed"))?;
+
+        index.remove(&key).ok_or(anyhow!("Key not found"))?;
+        let mut writer = self.writer.lock().map_err(|e| anyhow!(e.to_string()))?;
 
         let transaction: Transaction = Transaction::Remove(key);
         let bytes = transaction.to_bytes()?;
 
-        self.writer.write(&bytes)?;
-        self.writer.writer.flush()?;
+        writer.write(&bytes)?;
+        writer.flush()?;
         Ok(())
     }
 }
@@ -326,5 +358,9 @@ impl<T: Write> BufferWriter<T> {
         self.pos += size;
 
         Ok(size)
+    }
+
+    pub fn flush(&mut self) -> Result<()> {
+        self.writer.flush().map_err(|e| anyhow!(e.to_string()))
     }
 }

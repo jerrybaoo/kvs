@@ -23,10 +23,10 @@ pub fn bench_write(c: &mut Criterion) {
     }
 
     let tmp_dir = TempDir::new().unwrap();
-    let mut sled = Sled::new(&tmp_dir.path().to_path_buf()).unwrap();
+    let sled = Sled::new(&tmp_dir.path().to_path_buf()).unwrap();
 
     let kvs_tmp_dir = TempDir::new().unwrap();
-    let mut kvs_store = KVStore::new(&kvs_tmp_dir.path().to_path_buf()).unwrap();
+    let kvs_store = KVStore::new(&kvs_tmp_dir.path().to_path_buf()).unwrap();
 
     let mut group: criterion::BenchmarkGroup<'_, criterion::measurement::WallTime> =
         c.benchmark_group("get_write");
@@ -59,13 +59,13 @@ pub fn bench_read(c: &mut Criterion) {
     }
 
     let tmp_dir = TempDir::new().unwrap();
-    let mut sled = Sled::new(&tmp_dir.path().to_path_buf()).unwrap();
+    let sled = Sled::new(&tmp_dir.path().to_path_buf()).unwrap();
     keys.iter().enumerate().for_each(|(index, elem)| {
         sled.set(elem.to_owned(), values[index].to_owned()).unwrap();
     });
 
     let kvs_tmp_dir = TempDir::new().unwrap();
-    let mut kvs_store = KVStore::new(&kvs_tmp_dir.path().to_path_buf()).unwrap();
+    let kvs_store = KVStore::new(&kvs_tmp_dir.path().to_path_buf()).unwrap();
     keys.iter().enumerate().for_each(|(index, elem)| {
         kvs_store
             .set(elem.to_owned(), values[index].to_owned())

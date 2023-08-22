@@ -9,7 +9,7 @@ use crate::{engine::KvsEngine, kvs::KVStore};
 fn kvs_engine_new_write_log() {
     let tmp_dir = TempDir::new().unwrap();
     let path = tmp_dir.path();
-    let mut kv_store = KVStore::new(&path.to_path_buf()).unwrap();
+    let kv_store = KVStore::new(&path.to_path_buf()).unwrap();
     let mut key_id = 1;
 
     loop {
