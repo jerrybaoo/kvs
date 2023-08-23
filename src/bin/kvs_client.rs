@@ -1,10 +1,7 @@
-use std::io::Write;
-use std::net::TcpStream;
-
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
-use kvs::server::{Request, Response};
+use kvs::client::Client;
 
 #[derive(Parser, Debug)]
 struct Cli {
@@ -27,41 +24,30 @@ enum Commands {
     Version {},
 }
 
-fn main() -> Result<()> {
+#[tokio::main]
+pub async fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    let request = match cli.command {
+    let mut client = Client::connect(&cli.addr).await?;
+
+    match cli.command {
         Commands::Get { key } => {
-            let req = bson::to_vec(&Request::Get(key))?;
-            Some((req, cli.addr))
+            let resp = client.get(key).await?;
+            println!("{}", resp)
         }
         Commands::Set { key, value } => {
-            let req = bson::to_vec(&Request::Set(key, value))?;
-            Some((req, cli.addr))
+            let resp = client.set(key, value).await?;
+            println!("{}", resp)
         }
         Commands::Remove { key } => {
-            let req: Vec<u8> = bson::to_vec(&Request::Remove(key))?;
-            Some((req, cli.addr))
+            let resp = client.remove(key).await?;
+            println!("{}", resp)
         }
         Commands::Version {} => {
             let version = env!("CARGO_PKG_VERSION");
             println!("kvs version {:}", version);
-            None
         }
     };
-
-    if let Some((bz, server_addr)) = request {
-        let mut stream = TcpStream::connect(&server_addr)?;
-        stream.write(&bz)?;
-        bson::from_reader::<_, Response>(stream).map_or_else(
-            |e| println!("read response from stream failed, reason:{:}", e),
-            |r| {
-                if !r.response.is_empty() {
-                    println!("{}", r.response)
-                }
-            },
-        )
-    }
 
     Ok(())
 }
