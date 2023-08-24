@@ -1,6 +1,8 @@
-use std::fs::{self};
+use std::fs;
+use std::thread;
 
 use anyhow::Result;
+use crossbeam::sync::WaitGroup;
 use tempfile::TempDir;
 
 use crate::{engine::KvsEngine, kvs::KVStore};
@@ -75,4 +77,37 @@ fn kvs_engine_compress() {
         .get(key_id.to_string())
         .unwrap()
         .eq(&(key_id * 20).to_string()));
+}
+
+#[test]
+fn kvs_concurrent() {
+    let tmp_dir = TempDir::new().unwrap();
+    let path = tmp_dir.path();
+    let kv_store = KVStore::new(&path.to_path_buf()).unwrap();
+
+    let wg = WaitGroup::new();
+    for i in 0..100 {
+        let kvs = kv_store.clone();
+        let wg = wg.clone();
+        thread::spawn(move || {
+            kvs.set(format!("key-{}", i), format!("value-{}", i))
+                .unwrap();
+            drop(wg)
+        });
+    }
+
+    wg.wait();
+
+    let wg = WaitGroup::new();
+    for i in 0..100 {
+        let kvs = kv_store.clone();
+        let wg = wg.clone();
+        thread::spawn(move || {
+            let value = kvs.get(format!("key-{}", i)).unwrap();
+            assert_eq!(value, format!("value-{}", i));
+            drop(wg)
+        });
+    }
+
+    wg.wait()
 }

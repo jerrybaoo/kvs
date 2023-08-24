@@ -5,10 +5,10 @@ use std::sync::{
 
 use crossbeam::sync::WaitGroup;
 
-use crate::thread_pool::ThreadPool;
 use crate::thread_pool::native::NativeThreadPool;
-use crate::thread_pool::shared_queue::SharedQueueThreadPool;
 use crate::thread_pool::rayon::RayonThreadPool;
+use crate::thread_pool::shared_queue::SharedQueueThreadPool;
+use crate::thread_pool::ThreadPool;
 
 #[test]
 fn native_thread_pool_run_jobs() {
@@ -29,7 +29,7 @@ fn shared_queue_pool_run_panic_jobs() {
 }
 
 #[test]
-fn rayon_thread_pool_run_jobs(){
+fn rayon_thread_pool_run_jobs() {
     let thread_pool = RayonThreadPool::new(16).unwrap();
     multi_thread_jobs(thread_pool, 12)
 }

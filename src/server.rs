@@ -1,60 +1,69 @@
-use std::io::Write;
-use std::net::{TcpListener, TcpStream};
+// use std::io::Write;
 
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
+use tokio::net::TcpListener;
 
+use crate::connection::Connection;
 use crate::engine::KvsEngine;
-use crate::thread_pool::{shared_queue::SharedQueueThreadPool, ThreadPool};
+// use crate::thread_pool::{shared_queue::SharedQueueThreadPool, ThreadPool};
 
 pub struct Server<E: KvsEngine> {
     engine: E,
-    thread_pool: SharedQueueThreadPool,
+    // thread_pool: SharedQueueThreadPool,
 }
 
 impl<E: KvsEngine> Server<E> {
     pub fn new(engine: E) -> Result<Self> {
         Ok(Self {
             engine,
-            thread_pool: SharedQueueThreadPool::new(12).expect("create thread pool failed"),
+            //thread_pool: SharedQueueThreadPool::new(12).expect("create thread pool failed"),
         })
     }
 
-    pub fn serve(&mut self, addr: String) -> Result<()> {
-        let listener = TcpListener::bind(addr)?;
-
-        for in_coming in listener.incoming() {
+    pub async fn serve(&mut self, addr: String) -> Result<()> {
+        let listener = TcpListener::bind(addr).await?;
+        loop {
+            let (stream, _) = listener.accept().await?;
+            let conn = Connection::new(stream);
             let mut engine = self.engine.clone();
-            self.thread_pool.spawn(move || {
-                match in_coming {
-                    Ok(mut stream) => {
-                        let res = Self::process_request(&mut engine, &mut stream)
-                            .and_then(|data| stream.write(&data).map_err(|e| anyhow!(e)));
-                        log::info!("process stream result: {:#?}", res)
-                    }
-                    Err(e) => log::error!("connection has error: {}", e),
-                };
-            })
+            tokio::spawn(async move {
+                let res = Self::process_connection(&mut engine, conn).await;
+                if let Err(e) = res {
+                    log::error!("connection has error {}", e);
+                }
+            });
         }
-
-        Ok(())
     }
 
-    fn process_request(engine: &mut E, stream: &mut TcpStream) -> Result<Vec<u8>> {
-        let request = bson::from_reader::<_, Request>(stream)?;
+    async fn process_connection(engine: &mut E, mut conn: Connection) -> Result<()> {
+        loop {
+            let req = conn.read::<Request>().await?;
+
+            if let Some(r) = req {
+                let resp = Self::process_request(engine, &r)?;
+                conn.write(Response {
+                    response: String::from_utf8(resp)?,
+                })
+                .await?;
+            }
+        }
+    }
+
+    fn process_request(engine: &mut E, request: &Request) -> Result<Vec<u8>> {
         let response = Self::process_transaction(engine, &request);
         bson::ser::to_vec(&response).map_err(|e| anyhow!(e))
     }
 
     fn process_transaction(engine: &mut E, request: &Request) -> Response {
         match request {
-            Request::Get(key) => Self::get_from_engine(engine, key),
-            Request::Set(key, value) => Self::set_to_engine(engine, key, value),
-            Request::Remove(key) => Self::remove_from_engine(engine, key),
+            Request::Get(key) => Self::get(engine, key),
+            Request::Set(key, value) => Self::set(engine, key, value),
+            Request::Remove(key) => Self::remove(engine, key),
         }
     }
 
-    fn get_from_engine(engine: &mut E, key: &String) -> Response {
+    fn get(engine: &mut E, key: &String) -> Response {
         engine.get(key.to_owned()).map_or_else(
             |_| Response {
                 response: "Key not found".to_string(),
@@ -63,7 +72,7 @@ impl<E: KvsEngine> Server<E> {
         )
     }
 
-    fn set_to_engine(engine: &mut E, key: &String, value: &String) -> Response {
+    fn set(engine: &mut E, key: &String, value: &String) -> Response {
         engine.set(key.to_owned(), value.to_owned()).map_or_else(
             |e| Response {
                 response: e.to_string(),
@@ -74,7 +83,7 @@ impl<E: KvsEngine> Server<E> {
         )
     }
 
-    fn remove_from_engine(engine: &mut E, key: &String) -> Response {
+    fn remove(engine: &mut E, key: &String) -> Response {
         engine.remove(key.to_owned()).map_or_else(
             |e| Response {
                 response: e.to_string(),
