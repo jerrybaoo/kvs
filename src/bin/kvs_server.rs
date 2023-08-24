@@ -14,14 +14,15 @@ struct ServerCommand {
     engine: String,
 }
 
-fn main() -> Result<()> {
+#[tokio::main]
+pub async fn main() -> Result<()> {
     let cli = ServerCommand::parse();
 
     if cli.engine.eq("kvs") {
         let engine = KVStore::new(&current_dir().map_err(|e| anyhow!(e))?)?;
-        Server::<KVStore>::new(engine)?.serve(cli.listen_addr)
+        Server::<KVStore>::new(engine)?.serve(cli.listen_addr).await
     } else {
         let engine = Sled::new(&current_dir().map_err(|e| anyhow!(e))?)?;
-        Server::<Sled>::new(engine)?.serve(cli.listen_addr)
+        Server::<Sled>::new(engine)?.serve(cli.listen_addr).await
     }
 }
